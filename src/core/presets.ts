@@ -6,6 +6,10 @@ export interface PromptPreset {
   directory: string;
   reference?: string;
 }
+/** Prefix a public asset path with Vite's base URL for project-site hosting. */
+export function demoAssetUrl(path: string): string {
+  return `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
+}
 export const promptPresets: readonly PromptPreset[] = [
   {
     id: "alpine",
@@ -72,9 +76,11 @@ export function demoAssets(prompt: string) {
   const directory = preset?.directory || "/demo";
   return {
     preset,
-    directory,
-    image: `${directory}/final.webp`,
+    directory: demoAssetUrl(directory),
+    image: demoAssetUrl(`${directory}/final.webp`),
     frame: (step: number) =>
-      `${directory}/frame-${Math.min(24, Math.max(1, Math.round(step)))}.webp`,
+      demoAssetUrl(
+        `${directory}/frame-${Math.min(24, Math.max(1, Math.round(step)))}.webp`,
+      ),
   };
 }

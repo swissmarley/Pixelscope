@@ -23,7 +23,7 @@ async function assetURL(
   id: string,
   assets: Asset[],
 ): Promise<string> {
-  if (!value.startsWith("data:") && !value.startsWith("/demo/")) return value;
+  if (!value.startsWith("data:") && !value.includes("/demo/")) return value;
   const blob = await (await fetch(value)).blob();
   assets.push({ id, blob });
   return `asset:${id}`;

@@ -1,4 +1,5 @@
 import type { PipelineEvent } from "../core/types";
+import { demoAssetUrl } from "../core/presets";
 export default function Sequence({
   event,
   events,
@@ -19,7 +20,9 @@ export default function Sequence({
         ? sampled.position
         : 0;
   const image =
-    progress?.type === "grid_progress" ? progress.preview : "/demo/final.webp";
+    progress?.type === "grid_progress"
+      ? progress.preview
+      : demoAssetUrl("/demo/final.webp");
   return (
     <div className="sequence-scene">
       <div className="sequence-layout">

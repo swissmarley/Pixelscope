@@ -3,7 +3,7 @@ import { X, ArrowRight, Check } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import type { RunConfig, SavedRun } from "../core/types";
 import { scheduler } from "../core/store";
-import { promptPresets } from "../core/presets";
+import { demoAssetUrl, promptPresets } from "../core/presets";
 export function Dialog({
   title,
   onClose,
@@ -363,7 +363,9 @@ export function Presets({
             onClick={async () => {
               let reference;
               if (p.reference) {
-                const blob = await (await fetch(p.reference)).blob();
+                const blob = await (
+                  await fetch(demoAssetUrl(p.reference))
+                ).blob();
                 reference = await new Promise<string>((resolve) => {
                   const reader = new FileReader();
                   reader.onload = () => resolve(String(reader.result));

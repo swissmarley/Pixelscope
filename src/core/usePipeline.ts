@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MockSource, LabSource, LiveSource } from "./sources";
 import { scheduler, useStore } from "./store";
 import { saveRun } from "./persistence";
+import { demoAssets } from "./presets";
 import type { RunConfig } from "./types";
 export function usePipeline() {
   const { config, setConfig, setError, setReceiving } = useStore();
@@ -55,7 +56,7 @@ export function usePipeline() {
               thumbnail:
                 final && "image" in final
                   ? final.image
-                  : last?.preview || "/demo/final.webp",
+                  : last?.preview || demoAssets(actual.prompt).image,
             });
           } catch {
             setError(

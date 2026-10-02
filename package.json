@@ -1,0 +1,42 @@
+{
+  "name": "pixelscope",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "proxy": "node --env-file=.env server/proxy.mjs",
+    "proxy:dev": "node server/proxy.mjs",
+    "format": "prettier --write src tests server scripts *.json *.ts"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.2.5",
+    "@fontsource/jetbrains-mono": "^5.2.5",
+    "@phosphor-icons/react": "^2.1.10",
+    "@tailwindcss/vite": "^4.1.0",
+    "d3": "^7.9.0",
+    "express": "^5.1.0",
+    "katex": "^0.16.22",
+    "motion": "^12.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwindcss": "^4.1.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@playwright/cli": "^0.1.22",
+    "@types/d3": "^7.4.3",
+    "@types/katex": "^0.16.7",
+    "@types/node": "^26.6.3",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "prettier": "^3.9.9",
+    "sharp": "^0.35.5",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.0",
+    "vitest": "^4.1.11"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "provenance": "Prerecorded images generated with the built-in image generation tool. The 24 refinement frames per preset are synthetic educational illustrations, not recorded model internals.",
+  "presets": [
+    {
+      "id": "alpine",
+      "image": "/demo/final.webp",
+      "generationPrompt": "A cozy cabin beside an alpine lake at sunset, cinematic light, reflections on still water"
+    },
+    {
+      "id": "lettering",
+      "image": "/demo/lettering/final.webp",
+      "generationPrompt": "Square premium editorial photograph of a vintage Paris cafe storefront at dawn. Centerpiece is a dark green metal sign with beautiful cream typography reading exactly \"GOOD MORNING\". Text must be crisp, readable and spelled correctly. Warm cafe windows, muted stone architecture, soft morning light, no other text, no watermark. Educational demo asset, 512px square friendly framing."
+    },
+    {
+      "id": "detailed",
+      "image": "/demo/detailed/final.webp",
+      "generationPrompt": "Square cinematic photograph of a cozy wooden alpine cabin with glowing amber windows and intricate wooden details, beside a still glacial lake, layered mist, snow-capped peaks, rosy dusk reflections, dramatic textured sky, detailed foreground stones, cinematic photography. Rich navy and amber, realistic textured detail, no text or watermark. Different composition: cabin on the left, broad lake on right."
+    },
+    {
+      "id": "simple",
+      "image": "/demo/simple/final.webp",
+      "generationPrompt": "Square minimalist cinematic photograph of a small isolated cabin on the shore of a calm alpine lake at sunset. Simple sparse composition, smooth peach sky, single mountain silhouette, clean reflection, fewer details, cabin in center, navy blue and soft amber, no text or watermark."
+    },
+    {
+      "id": "cats",
+      "image": "/demo/cats/final.webp",
+      "generationPrompt": "Square cinematic interior photograph of exactly THREE cats sitting together on a dark sage green velvet sofa. One ginger cat on the left, one gray tabby in the center, one black-and-white cat on the right. All three cats fully visible with clear separate bodies, warm afternoon window light, tasteful cozy room, photorealistic, no people, no text, no watermark."
+    },
+    {
+      "id": "woodblock",
+      "image": "/demo/woodblock/final.webp",
+      "generationPrompt": "Square beautiful Japanese woodblock print of a small alpine cabin beside a lake. Indigo ink, textured cream washi paper, stylized angular mountains, pine trees, flat flowing lake ripples, warm red setting sun, bold linework, traditional limited palette, no text, no signature, no watermark."
+    },
+    {
+      "id": "winter",
+      "image": "/demo/winter/final.webp",
+      "generationPrompt": "Square cinematic photograph of a cozy wooden alpine cabin on the lower right beside a lake in winter morning. Snow blankets the cabin roof and pine trees. Cold blue snowy alpine peaks, pale pink sunrise sky, partly frozen lake reflecting the cabin with amber window light, soft powder snow, subtle mist, photorealistic, no text, no watermark."
+    }
+  ]
+}

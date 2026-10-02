@@ -1,0 +1,15 @@
+:root {
+  --bg: #0d1016;
+  --panel: #141820;
+  --panel-raised: #1b202a;
+  --border: #282e3a;
+  --text: #eef0f6;
+  --muted: #969ead;
+  --dim: #717c90;
+  --cyan: #79d8e7;
+  --violet: #af9af9;
+  --amber: #e9bb77;
+  --radius: 12px;
+  --font-ui: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}

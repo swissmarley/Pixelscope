@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
-import { X, ArrowRight, Check } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
+import { X, ArrowRight, Check, Trash } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import type { RunConfig, SavedRun } from "../core/types";
-import { scheduler } from "../core/store";
+import { useStore } from "../core/store";
 import { demoAssetUrl, promptPresets } from "../core/presets";
+import { serverUrlProblem } from "../core/settings";
+import { MAX_SAVED_RUNS, storageUsage } from "../core/persistence";
 export function Dialog({
   title,
   onClose,
@@ -85,6 +87,9 @@ export function Settings({
   onChange: (c: Partial<RunConfig>) => void;
   onClose: () => void;
 }) {
+  const { autoPause, setAutoPause } = useStore();
+  const proxyProblem = serverUrlProblem(config.proxyUrl);
+  const labProblem = serverUrlProblem(config.labUrl);
   return (
     <Dialog title="Connection settings" onClose={onClose}>
       <p className="muted">
@@ -123,8 +128,15 @@ export function Settings({
           aria-label="Proxy URL"
           type="url"
           value={config.proxyUrl}
+          aria-invalid={Boolean(proxyProblem)}
+          aria-describedby={proxyProblem ? "proxy-url-error" : undefined}
           onChange={(e) => onChange({ proxyUrl: e.target.value })}
         />
+        {proxyProblem && (
+          <small id="proxy-url-error" className="field-error">
+            {proxyProblem}
+          </small>
+        )}
       </label>
       <label>
         Lab URL
@@ -132,8 +144,15 @@ export function Settings({
           aria-label="Lab URL"
           type="url"
           value={config.labUrl}
+          aria-invalid={Boolean(labProblem)}
+          aria-describedby={labProblem ? "lab-url-error" : undefined}
           onChange={(e) => onChange({ labUrl: e.target.value })}
         />
+        {labProblem && (
+          <small id="lab-url-error" className="field-error">
+            {labProblem}
+          </small>
+        )}
       </label>
       <div className="settings-grid">
         <label>
@@ -164,6 +183,25 @@ export function Settings({
             <option>DDIM</option>
           </select>
         </label>
+        <label>
+          Guidance (CFG)
+          <input
+            aria-label="Guidance scale (CFG)"
+            type="number"
+            min="0"
+            max="15"
+            step="0.5"
+            value={config.guidance}
+            onChange={(e) =>
+              onChange({
+                guidance: Math.max(
+                  0,
+                  Math.min(15, Number(e.target.value) || 0),
+                ),
+              })
+            }
+          />
+        </label>
       </div>
       <label>
         Negative prompt
@@ -176,20 +214,20 @@ export function Settings({
       <label className="check-setting">
         <input
           type="checkbox"
-          defaultChecked={scheduler.autoPause}
-          onChange={(e) => {
-            scheduler.autoPause = e.target.checked;
-          }}
+          checked={autoPause}
+          onChange={(e) => setAutoPause(e.target.checked)}
         />
         Pause at each new stage
       </label>
       <div className="settings-note">
-        SD-Turbo uses up to four steps with CFG disabled. Hosted providers
-        receive their supported settings only. Demo presets use prerecorded
-        previews; custom prompts use the alpine example.
+        SD-Turbo uses up to four steps with CFG disabled. For classic CFG in
+        Local lab, load an SD 1.x model and set guidance above 1. Hosted
+        providers receive their supported settings only. Demo presets use
+        prerecorded previews; custom prompts use the alpine example. Settings
+        are saved in this browser.
       </div>
       <button className="primary-button" onClick={onClose}>
-        Save settings <Check size={14} />
+        Done <Check size={14} />
       </button>
     </Dialog>
   );
@@ -199,26 +237,63 @@ export function History({
   compare,
   setCompare,
   onReplay,
+  onDelete,
+  onClear,
   onClose,
 }: {
   runs: SavedRun[];
   compare: SavedRun[];
   setCompare: (runs: SavedRun[]) => void;
   onReplay: (run: SavedRun) => void;
+  onDelete: (run: SavedRun) => void;
+  onClear: () => void;
   onClose: () => void;
 }) {
+  const [usage, setUsage] = useState<number>();
+  const [confirmClear, setConfirmClear] = useState(false);
+  useEffect(() => {
+    void storageUsage().then(setUsage);
+  }, [runs]);
   return (
     <Dialog title="Run history" onClose={onClose} wide>
       <p className="muted">
-        Saved locally, including every frame. Select two runs to compare.
+        Saved in this browser, including every frame and any reference image.
+        Select two runs to compare. The newest {MAX_SAVED_RUNS} runs are kept.
       </p>
+      {runs.length > 0 && (
+        <div className="history-tools">
+          <span>
+            {runs.length} {runs.length === 1 ? "run" : "runs"}
+            {usage !== undefined &&
+              ` · about ${(usage / 1024 / 1024).toFixed(1)} MB stored`}
+          </span>
+          {confirmClear ? (
+            <>
+              <span>Delete every saved run?</span>
+              <button
+                onClick={() => {
+                  setConfirmClear(false);
+                  onClear();
+                }}
+              >
+                Delete all
+              </button>
+              <button onClick={() => setConfirmClear(false)}>Keep</button>
+            </>
+          ) : (
+            <button onClick={() => setConfirmClear(true)}>
+              <Trash size={13} /> Clear history
+            </button>
+          )}
+        </div>
+      )}
       {runs.length === 0 && (
         <p>Generate an image to save your first journey.</p>
       )}
       <div className="history-list">
         {runs.map((run) => (
           <div key={run.id}>
-            <img src={run.thumbnail} alt="Saved run" />
+            <img src={run.thumbnail} alt={`Result for: ${run.config.prompt}`} />
             <div>
               <b>{run.config.prompt}</b>
               <span>
@@ -237,6 +312,12 @@ export function History({
                 }
               >
                 {compare.some((c) => c.id === run.id) ? "Selected" : "Compare"}
+              </button>
+              <button
+                aria-label={`Delete run: ${run.config.prompt}`}
+                onClick={() => onDelete(run)}
+              >
+                <Trash size={13} /> Delete
               </button>
             </div>
           </div>

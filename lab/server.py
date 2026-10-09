@@ -1,45 +1,134 @@
 """Pixelscope optional Lab. No dependency installation or downloads at import time."""
+import asyncio
 import base64
+import binascii
+import inspect
 import io
 import json
 import math
 import os
 import queue
+import re
 import threading
 import time
 import uuid
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+DEFAULT_ORIGINS = "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173,https://swissmarley.github.io"
+ORIGINS = [o.strip() for o in os.getenv("PIXELSCOPE_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()]
+MAX_BODY_BYTES = 16 * 1024 * 1024
+MAX_REFERENCE_BYTES = 10 * 1024 * 1024
+MAX_REFERENCE_PIXELS = 40_000_000
+REFERENCE_FORMATS = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
+
 app = FastAPI(title="Pixelscope Lab")
-app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"], allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
+cors = dict(allow_origins=ORIGINS, allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
+if "allow_private_network" in inspect.signature(CORSMiddleware.__init__).parameters:
+    cors["allow_private_network"] = True  # Starlette 0.51+; older versions get the header from guard()
+app.add_middleware(CORSMiddleware, **cors)
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    # Only answer requests addressed to this machine, which blocks DNS rebinding.
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        return JSONResponse({"error": "Host is not allowed."}, status_code=403)
+    length = request.headers.get("content-length")
+    if length and (not length.isdigit() or int(length) > MAX_BODY_BYTES):
+        return JSONResponse({"error": "Request exceeds 16 MB."}, status_code=413)
+    response = await call_next(request)
+    # Chrome asks before a public HTTPS page (such as GitHub Pages) reaches localhost.
+    if request.method == "OPTIONS" and request.headers.get("access-control-request-private-network") == "true" and request.headers.get("origin") in ORIGINS:
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
 lock = threading.Lock()
 pipelines = {}
+current = {"cancelled": None}
 
 class Config(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
-    negative: str = ""
+    negative: str = Field(default="", max_length=4000)
     seed: int = Field(default=42819, ge=0, le=2**32-1)
     steps: int = Field(default=4, ge=1, le=50)
     guidance: float = Field(default=0, ge=0, le=15)
     strength: float = Field(default=.55, gt=0, le=1)
-    reference: Optional[str] = None
-    sampler: str = "Euler"
+    # A 10 MB image is about 13.4 MB as base64.
+    reference: Optional[str] = Field(default=None, max_length=14 * 1024 * 1024)
+    sampler: Literal["Euler", "DDIM"] = "Euler"
     family: str = "diffusion"
+
+def model_name():
+    return os.getenv("PIXELSCOPE_LAB_MODEL", "stabilityai/sd-turbo")
+
+def public_model_name(model):
+    """Show a local model folder by its name only, never its full path."""
+    if os.path.isabs(model) or os.path.isdir(model):
+        return os.path.basename(os.path.normpath(model)) + " (local folder)"
+    return model
+
+def model_available(model):
+    if os.path.isdir(model):
+        return os.path.isfile(os.path.join(model, "model_index.json"))
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        return isinstance(try_to_load_from_cache(model, "model_index.json"), str)
+    except Exception:
+        return None
 
 @app.get("/health")
 def health():
-    return {"status": "ready", "model": os.getenv("PIXELSCOPE_LAB_MODEL", "stabilityai/sd-turbo"), "downloads_allowed": os.getenv("PIXELSCOPE_ALLOW_MODEL_DOWNLOAD") == "1"}
+    model = model_name()
+    downloads = os.getenv("PIXELSCOPE_ALLOW_MODEL_DOWNLOAD") == "1"
+    cached = model_available(model)
+    return {"status": "model_missing" if cached is False and not downloads else "ready", "model": public_model_name(model), "model_cached": cached, "downloads_allowed": downloads}
 
-def image_data(image):
+def decode_reference(value):
+    """Check a reference data URL from its bytes and header, before any pixels are decoded."""
+    from PIL import Image, UnidentifiedImageError
+    Image.MAX_IMAGE_PIXELS = MAX_REFERENCE_PIXELS
+    match = re.fullmatch(r"data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/=]+)", value)
+    if not match:
+        raise ValueError("The reference must be a PNG, JPEG or WebP image.")
+    try:
+        raw = base64.b64decode(match.group(1), validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("The reference image data is damaged.") from None
+    if len(raw) > MAX_REFERENCE_BYTES:
+        raise ValueError("The reference image exceeds 10 MB.")
+    try:
+        image = Image.open(io.BytesIO(raw), formats=list(REFERENCE_FORMATS))
+    except Image.DecompressionBombError:
+        raise ValueError("The reference is too large. Use one under 40 megapixels.") from None
+    except (UnidentifiedImageError, OSError):
+        raise ValueError("The reference is not a readable PNG, JPEG or WebP image.") from None
+    if image.width * image.height > MAX_REFERENCE_PIXELS:
+        raise ValueError(f"The reference is {image.width} × {image.height}. Use one under 40 megapixels.")
+    return image
+
+def prepare_reference(image):
+    # draft() lets JPEG decode at reduced scale, so large photos stay cheap.
+    image.draft("RGB", (1024, 1024))
+    try:
+        image.thumbnail((1024, 1024))
+        return image.convert("RGB").resize((512, 512))
+    except OSError:
+        raise ValueError("The reference image is damaged or incomplete.") from None
+
+def image_data(image, preview=False):
     buff = io.BytesIO()
+    if preview:
+        # Step previews are compressed: a PNG per step makes the stream very large.
+        image.save(buff, format="WEBP", quality=80)
+        return "data:image/webp;base64," + base64.b64encode(buff.getvalue()).decode()
     image.save(buff, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buff.getvalue()).decode()
 
-def generate_worker(config, output, cancelled):
+def generate_worker(config, reference, output, cancelled):
     started = time.monotonic()
     def emit(stage, kind, duration=400, **data):
         if cancelled.is_set():
@@ -53,13 +142,19 @@ def generate_worker(config, output, cancelled):
         from PIL import Image
         from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, EulerDiscreteScheduler, DDIMScheduler
         from diffusers.models.attention_processor import AttnProcessor
-        model = os.getenv("PIXELSCOPE_LAB_MODEL", "stabilityai/sd-turbo")
+        model = model_name()
         turbo = "turbo" in model.lower()
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         dtype = torch.float16 if device == "cuda" else torch.float32
         # Downloads require an explicit environment opt-in. Default is local cache only.
         if model not in pipelines:
-            pipelines[model] = AutoPipelineForText2Image.from_pretrained(model, torch_dtype=dtype, local_files_only=os.getenv("PIXELSCOPE_ALLOW_MODEL_DOWNLOAD") != "1").to(device)
+            downloads = os.getenv("PIXELSCOPE_ALLOW_MODEL_DOWNLOAD") == "1"
+            try:
+                pipelines[model] = AutoPipelineForText2Image.from_pretrained(model, torch_dtype=dtype, local_files_only=not downloads).to(device)
+            except OSError:
+                if downloads:
+                    raise ValueError(f"Could not load {public_model_name(model)}. Check the model name and your network connection.") from None
+                raise ValueError(f"{public_model_name(model)} is not in the local model cache. Download it first, or set PIXELSCOPE_ALLOW_MODEL_DOWNLOAD=1 to allow a download.") from None
         base = pipelines[model]
         if not hasattr(base, "tokenizer") or not hasattr(base, "unet"):
             raise ValueError("This backend instruments classic Stable Diffusion pipelines (SD-Turbo / SD 1.x).")
@@ -69,7 +164,7 @@ def generate_worker(config, output, cancelled):
         guidance = 0.0 if turbo else config.guidance
         generator = torch.Generator(device="cpu" if device == "mps" else device).manual_seed(config.seed)
         emit("request", "request_built", request={"prompt": config.prompt, "negative_prompt": config.negative, "seed": config.seed, "steps": steps, "guidance_scale": guidance, "size": "512x512", "reference_images": 1 if config.reference else 0, "note": "Turbo uses up to four steps with CFG disabled." if turbo else "Classic Stable Diffusion"})
-        emit("request", "sent", model=model)
+        emit("request", "sent", model=public_model_name(model))
         unpadded = pipe.tokenizer(config.prompt, truncation=False).input_ids
         encoded = pipe.tokenizer(config.prompt, padding="max_length", max_length=pipe.tokenizer.model_max_length, truncation=True, return_tensors="pt")
         ids = encoded.input_ids[0].tolist()
@@ -87,7 +182,7 @@ def generate_worker(config, output, cancelled):
         def preview(latent):
             with torch.no_grad():
                 decoded = pipe.vae.decode(latent.to(dtype)/pipe.vae.config.scaling_factor, return_dict=False)[0]
-            return image_data(pipe.image_processor.postprocess(decoded, output_type="pil")[0])
+            return image_data(pipe.image_processor.postprocess(decoded, output_type="pil")[0], preview=True)
         def tensor_preview(tensor):
             values = tensor.detach().float().mean(dim=1, keepdim=True)
             values = torch.nn.functional.interpolate(values, (128,128), mode="bilinear", align_corners=False)[0,0].cpu().numpy()
@@ -102,7 +197,12 @@ def generate_worker(config, output, cancelled):
         def capture_prediction(_module, _inputs, result):
             value = result.sample if hasattr(result, "sample") else result[0]
             capture["prediction"] = value.detach()
+        def stop_if_cancelled(_module, _inputs):
+            # Checked before every UNet pass, so Cancel frees the Lab within one pass.
+            if cancelled.is_set():
+                raise RuntimeError("Run cancelled")
         hook = pipe.unet.register_forward_hook(capture_prediction)
+        pre_hook = pipe.unet.register_forward_pre_hook(stop_if_cancelled)
         originals = dict(pipe.unet.attn_processors)
         score_originals = []
         # Instrument only mid-block cross-attention to avoid a huge memory cost.
@@ -123,15 +223,15 @@ def generate_worker(config, output, cancelled):
                     return probabilities
                 module.get_attention_scores = measured
                 module.set_processor(AttnProcessor())
-        reference = None
-        if config.reference:
-            raw = config.reference.split(",",1)[1]
-            reference = Image.open(io.BytesIO(base64.b64decode(raw))).convert("RGB").resize((512,512))
+        if reference is not None:
+            reference = prepare_reference(reference)
             with torch.no_grad():
                 pixels = pipe.image_processor.preprocess(reference).to(device=device, dtype=dtype)
                 latent = pipe.vae.encode(pixels).latent_dist.mode()*pipe.vae.config.scaling_factor
             emit("edit", "reference_encoded", image=image_data(reference), strength=config.strength, preview=tensor_preview(latent))
         def callback(pipeline, step, timestep, callback_kwargs):
+            if cancelled.is_set():
+                raise RuntimeError("Run cancelled")
             latent = callback_kwargs["latents"]
             sigma = float(pipeline.scheduler.sigmas[step]) if hasattr(pipeline.scheduler,"sigmas") else float(timestep)/float(pipeline.scheduler.config.num_train_timesteps)
             predictions = capture["prediction"]
@@ -159,39 +259,63 @@ def generate_worker(config, output, cancelled):
             final = image_data(result.images[0])
             emit("decode", "vae_decoded", image=final)
             emit("delivery", "final_image", image=final)
-            emit("delivery", "done", metadata={"seed":config.seed,"steps":len(pipe.scheduler.timesteps),"guidance":guidance,"model":model,"size":"512 × 512","seconds":time.monotonic()-started})
+            emit("delivery", "done", metadata={"seed":config.seed,"steps":len(pipe.scheduler.timesteps),"guidance":guidance,"model":public_model_name(model),"size":"512 × 512","seconds":time.monotonic()-started})
         finally:
             hook.remove()
+            pre_hook.remove()
             pipe.prepare_latents = original_prepare
             pipe.unet.set_attn_processor(originals)
             for module, score in score_originals:
                 module.get_attention_scores = score
-    except Exception as exc:
+    except ValueError as exc:
         if not cancelled.is_set():
             output.put({"error": str(exc)})
+    except Exception as exc:
+        if not cancelled.is_set():
+            output.put({"error": f"The Lab run failed: {type(exc).__name__}. See the Lab server log for details."})
+            import traceback
+            traceback.print_exc()
     finally:
         output.put(None)
         lock.release()
 
+def acquire_lock():
+    # A just-cancelled run needs a moment to notice the disconnect, then stops
+    # within one UNet pass; wait for it rather than refusing the new run.
+    if lock.acquire(timeout=3):
+        return True
+    previous = current["cancelled"]
+    return previous is not None and previous.is_set() and lock.acquire(timeout=30)
+
 @app.post("/generate")
 async def generate(config: Config, request: Request):
-    if not lock.acquire(blocking=False):
-        return StreamingResponse(iter(['data: {"error":"Lab is busy. Wait for the current run to finish."}\n\n']), media_type="text/event-stream")
+    reference = None
+    if config.reference:
+        try:
+            reference = decode_reference(config.reference)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+    if not await asyncio.to_thread(acquire_lock):
+        return JSONResponse({"error": "Lab is busy. Wait for the current run to finish."}, status_code=409)
     output = queue.Queue()
     cancelled = threading.Event()
-    worker = threading.Thread(target=generate_worker, args=(config,output,cancelled), daemon=True)
+    current["cancelled"] = cancelled
+    worker = threading.Thread(target=generate_worker, args=(config,reference,output,cancelled), daemon=True)
     worker.start()
-    def stream():
+    async def stream():
         try:
             while True:
                 try:
-                    value = output.get(timeout=1)
+                    value = await asyncio.to_thread(output.get, True, 1)
                 except queue.Empty:
+                    if await request.is_disconnected():
+                        break
                     yield ": heartbeat\n\n"
                     continue
                 if value is None:
                     break
                 yield "data: " + json.dumps(value) + "\n\n"
         finally:
+            # Runs when the client cancels or disconnects; the worker then stops.
             cancelled.set()
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})

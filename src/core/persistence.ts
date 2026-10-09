@@ -1,4 +1,6 @@
 import type { SavedRun, PipelineEvent } from "./types";
+/** Oldest runs beyond this count are removed when a new run is saved. */
+export const MAX_SAVED_RUNS = 30;
 interface Asset {
   id: string;
   blob: Blob;
@@ -23,7 +25,8 @@ async function assetURL(
   id: string,
   assets: Asset[],
 ): Promise<string> {
-  if (!value.startsWith("data:") && !value.includes("/demo/")) return value;
+  // Bundled demo frames stay as URLs; only generated image data is copied.
+  if (!value.startsWith("data:")) return value;
   const blob = await (await fetch(value)).blob();
   assets.push({ id, blob });
   return `asset:${id}`;
@@ -80,6 +83,49 @@ export async function saveRun(run: SavedRun) {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+  await pruneRuns(MAX_SAVED_RUNS);
+}
+async function pruneRuns(keep: number) {
+  const db = await dbPromise;
+  const runs = (await requestResult(
+    db.transaction("runs").objectStore("runs").getAll(),
+  )) as SavedRun[];
+  const old = runs.sort((a, b) => b.created - a.created).slice(keep);
+  if (old.length) await deleteRuns(old.map((r) => r.id));
+}
+/** Delete runs and every image asset stored for them. */
+export async function deleteRuns(ids: string[]) {
+  const db = await dbPromise;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(["runs", "assets"], "readwrite");
+    for (const id of ids) {
+      tx.objectStore("runs").delete(id);
+      // Asset keys are "<run id>-<event>-<field>"; run ids are UUIDs.
+      tx.objectStore("assets").delete(
+        IDBKeyRange.bound(`${id}-`, `${id}-\uffff`),
+      );
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+export async function clearRuns() {
+  const db = await dbPromise;
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(["runs", "assets"], "readwrite");
+    tx.objectStore("runs").clear();
+    tx.objectStore("assets").clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+/** Approximate bytes this site stores, when the browser reports it. */
+export async function storageUsage(): Promise<number | undefined> {
+  try {
+    return (await navigator.storage?.estimate?.())?.usage;
+  } catch {
+    return undefined;
+  }
 }
 export async function getRuns(): Promise<SavedRun[]> {
   const db = await dbPromise;

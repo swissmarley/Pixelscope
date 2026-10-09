@@ -11,7 +11,12 @@ import {
 } from "@phosphor-icons/react";
 import { scheduler, useStore } from "./core/store";
 import { familyStages, stages, type SavedRun } from "./core/types";
-import { getRuns, releaseRuns } from "./core/persistence";
+import {
+  clearRuns,
+  deleteRuns,
+  getRuns,
+  releaseRuns,
+} from "./core/persistence";
 import { usePipeline } from "./core/usePipeline";
 import { demoAssets } from "./core/presets";
 import { Settings, History, Tour, Presets } from "./components/Overlays";
@@ -28,6 +33,7 @@ export default function App() {
     playing,
     receiving,
     error,
+    errorInSettings,
     setError,
   } = useStore();
   const { generate, runConfig, setRunConfig, cancel } = usePipeline();
@@ -66,7 +72,11 @@ export default function App() {
     <MotionConfig reducedMotion="user">
       <div className="app">
         <header className="topbar">
-          <a className="brand" href="/" aria-label="Pixelscope home">
+          <a
+            className="brand"
+            href={import.meta.env.BASE_URL}
+            aria-label="Pixelscope home"
+          >
             <span className="brand-mark">
               <Aperture size={25} />
             </span>
@@ -103,13 +113,17 @@ export default function App() {
         {error && (
           <div role="alert" className="error-banner">
             {error}{" "}
-            <button onClick={() => setSettings(true)}>
-              Connection settings
-            </button>
+            {errorInSettings ? (
+              <button onClick={() => setSettings(true)}>
+                Connection settings
+              </button>
+            ) : (
+              <button onClick={() => setError("")}>Dismiss</button>
+            )}
           </div>
         )}
         <div className={`workspace ${!event ? "without-inspector" : ""}`}>
-          <aside className="progress-rail">
+          <aside className="progress-rail" aria-label="Pipeline stages">
             <div className="rail-title">
               THE PIPELINE <span>{activeStages.length} stages</span>
             </div>
@@ -166,7 +180,7 @@ export default function App() {
                       ? "THE AUTOREGRESSIVE PROCESS"
                       : "THE OBSERVABLE PROCESS"}
                 </span>
-                <h1>
+                <h1 aria-live="polite">
                   {selected?.title || "Ready when you are"}
                   <span className="scene-period">.</span>
                 </h1>
@@ -299,6 +313,26 @@ export default function App() {
               setRunConfig(run.config);
               scheduler.load(run.events);
               setHistory(null);
+            }}
+            onDelete={(run) => {
+              void deleteRuns([run.id]).then(
+                () => {
+                  releaseRuns([run]);
+                  setCompare(compare.filter((c) => c.id !== run.id));
+                  setHistory(history.filter((r) => r.id !== run.id));
+                },
+                () => setError("This run could not be deleted."),
+              );
+            }}
+            onClear={() => {
+              void clearRuns().then(
+                () => {
+                  releaseRuns(history);
+                  setCompare([]);
+                  setHistory([]);
+                },
+                () => setError("Run history could not be cleared."),
+              );
             }}
             onClose={() => {
               releaseRuns(

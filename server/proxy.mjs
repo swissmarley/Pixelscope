@@ -2,13 +2,22 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 
 const app = express();
+app.disable("x-powered-by");
 const origins = new Set(
   (
     process.env.PIXELSCOPE_ORIGINS ||
-    "http://127.0.0.1:5173,http://localhost:5173"
-  ).split(","),
+    "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173,https://swissmarley.github.io"
+  )
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean),
 );
+const localHosts = new Set(["127.0.0.1", "localhost", "[::1]"]);
 app.use((req, res, next) => {
+  // Only answer requests addressed to this machine, which blocks DNS rebinding.
+  const host = (req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
+  if (!localHosts.has(host))
+    return res.status(403).json({ error: "Host is not allowed." });
   const origin = req.headers.origin;
   if (origin && !origins.has(origin))
     return res.status(403).json({ error: "Origin is not allowed." });
@@ -16,6 +25,12 @@ app.use((req, res, next) => {
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Allow-Methods", "POST,GET,OPTIONS");
+  // Chrome asks before a public HTTPS page (such as GitHub Pages) reaches localhost.
+  if (
+    origin &&
+    req.headers["access-control-request-private-network"] === "true"
+  )
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
@@ -30,8 +45,24 @@ app.get("/health", (_req, res) =>
     },
   }),
 );
+/** The image type a file's leading bytes identify, if it is PNG, JPEG or WebP. */
+function sniffMime(bytes) {
+  if (bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")))
+    return "image/png";
+  if (bytes.subarray(0, 3).equals(Buffer.from("ffd8ff", "hex")))
+    return "image/jpeg";
+  if (
+    bytes.subarray(0, 4).toString("latin1") === "RIFF" &&
+    bytes.subarray(8, 12).toString("latin1") === "WEBP"
+  )
+    return "image/webp";
+  return undefined;
+}
 function imageInput(reference) {
-  if (typeof reference !== "string") return undefined;
+  if (reference === undefined || reference === null || reference === "")
+    return undefined;
+  if (typeof reference !== "string")
+    throw Error("Reference must be a PNG, JPEG or WebP data URL.");
   const match = reference.match(
     /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/,
   );
@@ -39,8 +70,11 @@ function imageInput(reference) {
   const bytes = Buffer.from(match[2], "base64");
   if (bytes.length > 10 * 1024 * 1024)
     throw Error("Reference image exceeds 10 MB.");
+  if (sniffMime(bytes) !== match[1])
+    throw Error("Reference bytes are not a valid PNG, JPEG or WebP image.");
   return { mime: match[1], data: match[2], bytes };
 }
+const outputFormats = new Set(["png", "jpeg", "webp"]);
 async function* parseProviderStream(response, signal) {
   const reader = response.body.getReader();
   let buffer = "";
@@ -62,7 +96,16 @@ async function* parseProviderStream(response, signal) {
           .filter((l) => l.startsWith("data:"))
           .map((l) => l.slice(5).trim())
           .join("\n");
-        if (data && data !== "[DONE]") yield JSON.parse(data);
+        if (!data || data === "[DONE]") continue;
+        let event;
+        try {
+          event = JSON.parse(data);
+        } catch {
+          throw Error(
+            "The provider sent a stream event that could not be read.",
+          );
+        }
+        yield event;
       }
     }
   } finally {
@@ -88,11 +131,9 @@ app.post("/api/generate", async (req, res) => {
       ? process.env.OPENAI_API_KEY
       : process.env.GEMINI_API_KEY;
   if (!key)
-    return res
-      .status(503)
-      .json({
-        error: `Set ${provider === "openai" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"} in the server-side .env file and restart the proxy.`,
-      });
+    return res.status(503).json({
+      error: `Set ${provider === "openai" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"} in the server-side .env file and restart the proxy.`,
+    });
   let image;
   try {
     image = imageInput(reference);
@@ -100,11 +141,9 @@ app.post("/api/generate", async (req, res) => {
     return res.status(400).json({ error: e.message });
   }
   if (active >= 2)
-    return res
-      .status(429)
-      .json({
-        error: "Two runs are already active. Try again when one completes.",
-      });
+    return res.status(429).json({
+      error: "Two runs are already active. Try again when one completes.",
+    });
   active++;
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -182,7 +221,10 @@ app.post("/api/generate", async (req, res) => {
               "Provider generation failed.",
           );
         if (event.b64_json) {
-          const url = `data:image/${event.output_format || "png"};base64,${event.b64_json}`;
+          const format = outputFormats.has(event.output_format)
+            ? event.output_format
+            : "png";
+          const url = `data:image/${format};base64,${event.b64_json}`;
           if (event.type?.includes("partial_image"))
             send(
               "delivery",
@@ -217,7 +259,11 @@ app.post("/api/generate", async (req, res) => {
           signal: controller.signal,
         },
       );
-      const result = await response.json();
+      const result = await response.json().catch(() => {
+        throw Error(
+          `Gemini returned an unreadable response (${response.status}).`,
+        );
+      });
       if (!response.ok)
         throw Error(
           result.error?.message || `Gemini returned ${response.status}.`,
@@ -225,7 +271,11 @@ app.post("/api/generate", async (req, res) => {
       const images =
         result.candidates
           ?.flatMap((c) => c.content?.parts || [])
-          .filter((p) => p.inlineData?.mimeType?.startsWith("image/")) || [];
+          .filter((p) =>
+            ["image/png", "image/jpeg", "image/webp"].includes(
+              p.inlineData?.mimeType,
+            ),
+          ) || [];
       for (const part of images) {
         finalImage = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
         send("delivery", "final_image", { image: finalImage });
@@ -262,14 +312,12 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 app.use((err, _req, res, _next) =>
-  res
-    .status(400)
-    .json({
-      error:
-        err.type === "entity.too.large"
-          ? "Request exceeds 14 MB."
-          : "Invalid request.",
-    }),
+  res.status(400).json({
+    error:
+      err.type === "entity.too.large"
+        ? "Request exceeds 14 MB."
+        : "Invalid request.",
+  }),
 );
 const port = Number(process.env.PORT || 3001);
 app.listen(port, "127.0.0.1", () =>

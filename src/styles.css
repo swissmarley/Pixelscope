@@ -2547,3 +2547,51 @@ kbd {
     max-width: clamp(170px, calc(100dvh - 600px), 400px);
   }
 }
+.history-list button svg,
+.history-tools button svg {
+  vertical-align: -2px;
+}
+.history-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.history-tools > span:first-child {
+  margin-right: auto;
+}
+.history-tools button {
+  font-size: 9px;
+  padding: 5px 10px;
+}
+.field-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: #f0a3a8;
+}
+/* Keep the transport inside narrow viewports however many events a run has. */
+.transport-controls,
+.timeline {
+  min-width: 0;
+}
+.markers {
+  overflow: hidden;
+}
+@media (max-width: 600px) {
+  .markers {
+    gap: 1px;
+  }
+  .speed {
+    flex-shrink: 0;
+  }
+}
+@media (max-width: 600px) {
+  .reference-strip {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+}

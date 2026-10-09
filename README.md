@@ -16,7 +16,7 @@ npm run dev
 Open http://127.0.0.1:5173. Demo mode works offline after setup: fonts and all image frames are bundled. It requires no credentials, Python, or model download. The initial run is paused. Generate starts playback at 0.25×.
 
 ```sh
-npm test
+npm run check   # typecheck, ESLint, Prettier check and unit tests
 npm run build
 ```
 
@@ -27,9 +27,9 @@ Demo includes seven prerecorded image examples. **Choosing a preset loads its ma
 - Space: play/pause. Left/right arrows: one event backward/forward. `[` / `]`: decrease/increase speed.
 - Transport buttons step by event or stage; timeline and denoising-step sliders scrub recorded events. Speed ranges from 0.1× to 4×.
 - Inspector switches between explanation and raw JSON; Show the math renders equations with KaTeX.
-- Settings include steps, sampler, negative prompt, provider, model, server URLs, and optional pause at stage boundaries.
-- Attach a PNG, JPEG, or WebP reference under 10 MB. Strength controls reference noising. Demo shows an analogy; Lab/Live perform an edit.
-- Run history saves event recordings and image blobs in IndexedDB. Replay needs no new API call. Select two runs to compare results and settings.
+- Settings include steps, sampler, guidance (CFG), negative prompt, provider, model, server URLs, and optional pause at stage boundaries. They are saved in this browser's local storage; prompts and reference images are not.
+- Attach a PNG, JPEG, or WebP reference under 10 MB and 40 megapixels. The file's bytes are checked, not its name, and it is re-encoded in the browser (longest side at most 1536 px) before use, which drops EXIF, GPS and other metadata. Strength controls reference noising. Demo shows an analogy; Lab/Live perform an edit.
+- Run history saves event recordings and generated images in IndexedDB. Runs you start with Generate are saved, as are all Lab and Live runs; opening the page, choosing a preset or switching family in Demo is not saved. Demo frames are stored as links to the bundled files, not copies. The newest 30 runs are kept; delete single runs or clear the history from the Run history dialog, which also shows how much the site stores. Replay needs no new API call. Select two runs to compare results and settings.
 - Presets cover image lettering, long vs short prompts, counting, style, and editing. Their actual success depends on the model.
 - The six-step first-visit tour can be reopened using Help. Reduced motion is respected; inputs and dialogs support keyboard navigation.
 
@@ -47,9 +47,13 @@ The proxy listens on http://127.0.0.1:3001. Select Live API, configure provider/
 
 OpenAI uses the Images generation/edit endpoint with SSE partial images, a 1024×1024 output, medium quality, and one image. Gemini uses `generateContent` with text/image modalities and optional inline reference bytes; this adapter emits the returned final image and usage, not invented partials. Negative prompt, seed, sampler, steps, and CFG are not forwarded when unsupported by these hosted APIs.
 
-The proxy validates provider/model/prompt/reference inputs, limits payload size and simultaneous requests, times out requests, cancels disconnected requests, restricts browser origins, and keeps keys out of events. Its provider endpoints are fixed server-side. `/health` returns credential availability booleans, never credentials. This is a **local development proxy**; before exposing it to a network, add authentication, rate/budget limits, TLS, and your deployment's origin policy.
+The proxy validates provider/model/prompt/reference inputs (including the reference's magic bytes), limits payload size and simultaneous requests, times out requests, cancels disconnected requests, restricts browser origins, answers only requests addressed to `localhost`/`127.0.0.1` (against DNS rebinding), and keeps keys out of events. Its provider endpoints are fixed server-side. `/health` returns credential availability booleans, never credentials. This is a **local development proxy**; before exposing it to a network, add authentication, rate/budget limits, TLS, and your deployment's origin policy.
 
 Live architecture is always shown as unknown. The separate “possible mechanisms” links open an illustrative Demo track, without claiming the hosted model uses that architecture. The lag indicator distinguishes incoming events from their replay; Catch up jumps to the latest received event.
+
+## Using Lab or Live from GitHub Pages
+
+The hosted site can drive a Lab or proxy running on your own machine. Both servers allow these browser origins by default: `http://127.0.0.1:5173`, `http://localhost:5173` (dev), `:4173` (`vite preview`) and `https://swissmarley.github.io`. If you deploy a fork, set `PIXELSCOPE_ORIGINS` to a comma-separated list that includes your Pages origin (scheme and host only, no path) before starting the proxy or the Lab. Both servers answer Chrome's Private Network Access preflight for allowed origins. Keep the server URLs in Connection settings on `http://127.0.0.1:…`: Chrome and Firefox let an HTTPS page reach loopback addresses, but not other plain-HTTP hosts; Safari may block both, so use the dev server there.
 
 ## Optional local diffusion Lab
 
@@ -68,12 +72,14 @@ export PIXELSCOPE_LAB_MODEL=stabilityai/sd-turbo
 uvicorn lab.server:app --host 127.0.0.1 --port 8000
 ```
 
-Choose Local lab and Diffusion. The default SD-Turbo model runs up to four steps with guidance disabled, following its model recommendations. For classic CFG, configure a compatible cached SD 1.x model and use more steps/guidance above 1. Lab supports classic Stable Diffusion pipelines, not arbitrary FLUX/SDXL architectures. Euler and DDIM are configurable; model suitability varies.
+Choose Local lab and Diffusion. The default SD-Turbo model runs up to four steps with guidance disabled, following its model recommendations. For classic CFG, set `PIXELSCOPE_LAB_MODEL` to a compatible cached SD 1.x model, then in Connection settings raise the steps and set Guidance (CFG) above 1; the Guidance stage then shows the unconditional, conditional and difference maps. Lab supports classic Stable Diffusion pipelines, not arbitrary FLUX/SDXL architectures. Euler and DDIM are configurable; model suitability varies.
 
 - CUDA: FP16 inference on a supported GPU. Full VAE step previews and attention capture add work and memory.
 - Apple Silicon: MPS, float32, CPU random generator. Performance and operation support depend on installed PyTorch.
 - CPU: float32; generation and decoding can take considerably longer. No speed guarantee.
-- Cache-only is the default. Without cached weights, the server reports an error rather than silently downloading.
+- Cache-only is the default. Without cached weights, the server reports that the model is not cached rather than silently downloading. `GET /health` reports `model_missing` in that case.
+- The Lab accepts PNG, JPEG and WebP references up to 10 MB and 40 megapixels, checks them before any model work starts, and limits request bodies to 16 MB. Step previews are sent as WebP to keep streams small. A local model folder is shown by its folder name only, never its full path.
+- Cancel stops the run at the next UNet pass. A new run started right after Cancel waits for the cancelled one to finish instead of failing with "Lab is busy".
 - Lab emits real CLIP tokens/IDs (77 context slots in SD-Turbo), a 32-column view of actual embeddings, a PCA projection, initial latent projection, decoded step previews, scheduler timesteps/sigmas, and measured mid-block cross-attention maps.
 - Classic CFG runs record actual unconditional/conditional predictions and their normalized difference views. SD-Turbo does not have that CFG split. Unsupported maps are omitted, never simulated under an “observed” label.
 - Attention capture uses the eager processor on mid-block cross-attention only, to reduce memory. These are normalized interaction weights, not a causal explanation.
@@ -96,13 +102,13 @@ Autoregressive mode is **not** a claim about the private internals of GPT Image 
 
 Do not bypass provider safety systems: the proxy preserves default provider moderation/safety behavior and displays blocked/error responses. The bundled demo assets are benign preset examples; the animated “safety step” is explicitly illustrative. The local Lab preserves any safety checker provided by the selected pipeline; some local models, including SD-Turbo configurations, may not include one. Pixelscope does not add or imply an independently validated local moderation system. Use only appropriate prompts/reference images, follow model licenses, and review generated outputs before sharing.
 
-Prompts and image bytes go to the selected provider only in Live mode, and to your local Python server in Lab. Saved recordings stay in your browser's IndexedDB and include your reference images. Clearing site storage deletes local history. The app has no analytics or remote font requests.
+Prompts and image bytes go to the selected provider only in Live mode, and to your local Python server in Lab. Reference images are re-encoded in the browser first, so EXIF data such as GPS location, camera and author is not sent or stored. Saved recordings stay in your browser's IndexedDB and include your reference images; delete them from Run history. The production build sets a Content-Security-Policy that allows scripts from the site itself only. The app has no analytics or remote font requests.
 
 ## Architecture
 
 `PipelineEvent` is a TypeScript discriminated union. `MockSource`, `LabSource`, and `LiveSource` share an async-iterable interface. The scheduler owns pacing, pause, speed, steps, stage transitions, and scrub. Components render event state; they do not independently schedule pipeline stages. A Zustand store coordinates controls. IndexedDB stores events plus image blobs for replay. Canvas2D handles noise/heatmaps; D3 builds the schedule chart; Motion animates scene/frame transitions.
 
-See [PLAN.md](PLAN.md). Browser screenshots for M1–M8 are under `output/playwright/`. Unit tests cover scheduler speed scaling/pause/stepping/scrub, noise math/CFG, deterministic family sources, cancellation, and chunked SSE parsing. Optional backend inference and paid provider generation require external setup and are not claimed as tested.
+See [PLAN.md](PLAN.md). Unit tests cover scheduler speed scaling/pause/stepping/scrub, noise math/CFG, deterministic family sources, cancellation, chunked SSE parsing, readable server errors, reference image checks, and settings validation. CI runs `npm run check` and the build on every pull request and before each Pages deployment. Optional backend inference and paid provider generation require external setup and are not claimed as tested.
 
 ## Demo assets
 

@@ -8,6 +8,7 @@ import {
 import type { PipelineEvent, RunConfig } from "../core/types";
 import { NoiseCanvas } from "./Visual";
 import { demoAssets } from "../core/presets";
+import { imageExtension } from "../core/image";
 export default function Delivery({
   event,
   events,
@@ -156,7 +157,7 @@ export default function Delivery({
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
                     a.href = url;
-                    a.download = `pixelscope-${config.seed}.${blob.type.includes("png") ? "png" : "webp"}`;
+                    a.download = `pixelscope-${config.seed}.${imageExtension(blob.type)}`;
                     a.click();
                     setTimeout(() => URL.revokeObjectURL(url), 1000);
                   }}

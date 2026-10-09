@@ -14,8 +14,7 @@ export default function Scene({
   events: PipelineEvent[];
   config: RunConfig;
 }) {
-  if (event.stage === "sequence")
-    return <Sequence event={event} events={events} />;
+  if (event.stage === "sequence") return <Sequence events={events} />;
   if (["decode", "edit", "delivery"].includes(event.stage))
     return <Delivery event={event} events={events} config={config} />;
   if (event.type === "denoise_step")

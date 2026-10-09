@@ -22,7 +22,7 @@ export default function Inspector({
     ),
   ) as unknown;
   return (
-    <aside className="inspector">
+    <aside className="inspector" aria-label="Inside the model">
       <div className="inspector-title">
         <Info size={16} />
         <span>Inside the model</span>

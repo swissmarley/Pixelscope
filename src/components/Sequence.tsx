@@ -1,12 +1,6 @@
 import type { PipelineEvent } from "../core/types";
 import { demoAssetUrl } from "../core/presets";
-export default function Sequence({
-  event,
-  events,
-}: {
-  event: PipelineEvent;
-  events: PipelineEvent[];
-}) {
+export default function Sequence({ events }: { events: PipelineEvent[] }) {
   const sampled = [...events]
     .reverse()
     .find((e) => e.type === "image_token_sampled");

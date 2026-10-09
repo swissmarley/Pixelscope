@@ -8,6 +8,8 @@ import {
 import { scheduler, useStore } from "../core/store";
 import type { RunConfig } from "../core/types";
 import { getPromptPreset } from "../core/presets";
+import { prepareReference } from "../core/image";
+import { clampSeed } from "../core/settings";
 export default function Compose({
   generate,
   presets,
@@ -48,6 +50,8 @@ export default function Compose({
             accept="image/png,image/jpeg,image/webp"
             onChange={(e) => {
               const file = e.target.files?.[0];
+              // Clear the input so choosing the same file again fires onChange.
+              e.target.value = "";
               if (!file) return;
               if (
                 !["image/png", "image/jpeg", "image/webp"].includes(file.type)
@@ -55,14 +59,18 @@ export default function Compose({
                 setError("Choose a PNG, JPEG or WebP image.");
                 return;
               }
-              if (file.size > 10 * 1024 * 1024) {
-                setError("Choose an image smaller than 10 MB.");
-                return;
-              }
-              const reader = new FileReader();
-              reader.onload = () =>
-                setConfig({ reference: String(reader.result) });
-              reader.readAsDataURL(file);
+              prepareReference(file).then(
+                (reference) => {
+                  setError("");
+                  setConfig({ reference });
+                },
+                (err: unknown) =>
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "This image could not be read.",
+                  ),
+              );
             }}
           />
         </div>
@@ -94,7 +102,6 @@ export default function Compose({
                         ? "diffusion"
                         : config.family,
                   steps: m === "lab" ? 4 : config.steps,
-                  guidance: m === "lab" ? 0 : config.guidance,
                 })
               }
             >
@@ -134,11 +141,10 @@ export default function Compose({
             type="number"
             min="0"
             max="4294967295"
+            step="1"
             value={config.seed}
             onChange={(e) =>
-              setConfig({
-                seed: Math.max(0, Math.min(4294967295, Number(e.target.value))),
-              })
+              setConfig({ seed: clampSeed(Number(e.target.value)) })
             }
           />
         </label>

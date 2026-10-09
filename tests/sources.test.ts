@@ -140,3 +140,60 @@ describe("preset recordings", () => {
     );
   });
 });
+
+describe("server errors", () => {
+  it("turns raw server responses into readable messages", async () => {
+    const { describeErrorBody } = await import("../src/core/sources");
+    expect(
+      describeErrorBody(
+        422,
+        JSON.stringify({
+          detail: [
+            {
+              type: "int_from_float",
+              loc: ["body", "seed"],
+              msg: "Input should be a valid integer",
+            },
+          ],
+        }),
+      ),
+    ).toBe(
+      "The server rejected these settings (seed: Input should be a valid integer).",
+    );
+    expect(describeErrorBody(502, "<html>not json</html>")).toBe(
+      "The server returned 502.",
+    );
+    expect(describeErrorBody(409, '{"error":"Lab is busy."}')).toBe(
+      "Lab is busy.",
+    );
+  });
+  it("reports a malformed event instead of a parser message", async () => {
+    await expect(
+      collect(
+        readSSE(
+          new Response("data: {not json\n\n"),
+          new AbortController().signal,
+        ),
+      ),
+    ).rejects.toThrow(/could not be read/);
+  });
+  it("explains unreachable and invalid server URLs", async () => {
+    const { LiveSource, LabSource } = await import("../src/core/sources");
+    await expect(
+      collect(
+        new LiveSource().stream(
+          { ...defaultConfig, proxyUrl: "not a url" },
+          new AbortController().signal,
+        ),
+      ),
+    ).rejects.toThrow(/proxy URL in Connection settings is invalid/);
+    await expect(
+      collect(
+        new LabSource().stream(
+          { ...defaultConfig, labUrl: "http://127.0.0.1:9" },
+          new AbortController().signal,
+        ),
+      ),
+    ).rejects.toThrow(/Could not reach the Lab at http:\/\/127.0.0.1:9/);
+  });
+});

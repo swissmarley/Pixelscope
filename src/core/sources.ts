@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import { random, sigmaAt } from "./math";
 import { demoAssets } from "./presets";
+import { clampSeed, serverBase, serverUrlProblem } from "./settings";
 export class MockSource implements PipelineSource {
   async *stream(
     c: RunConfig,
@@ -181,24 +182,47 @@ export class MockSource implements PipelineSource {
     });
   }
 }
+/** Turn an error response body into a sentence a person can act on. */
+export function describeErrorBody(status: number, body: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // Plain text is shown as is; HTML and other markup are not.
+    const text = body.trim();
+    return text && !text.startsWith("<") && text.length <= 400
+      ? text
+      : `The server returned ${status}.`;
+  }
+  if (typeof parsed === "object" && parsed !== null) {
+    if ("error" in parsed && typeof parsed.error === "string")
+      return parsed.error.slice(0, 400);
+    if ("detail" in parsed) {
+      const detail = parsed.detail;
+      if (typeof detail === "string") return detail.slice(0, 400);
+      // FastAPI validation errors: [{ loc: ["body", "seed"], msg: "..." }]
+      if (Array.isArray(detail)) {
+        const fields = detail
+          .map((d: unknown) => {
+            if (typeof d !== "object" || d === null) return "";
+            const loc = "loc" in d && Array.isArray(d.loc) ? d.loc : [];
+            const msg = "msg" in d && typeof d.msg === "string" ? d.msg : "";
+            return `${String(loc.at(-1) ?? "value")}: ${msg}`;
+          })
+          .filter(Boolean);
+        if (fields.length)
+          return `The server rejected these settings (${fields.join("; ")}).`;
+      }
+    }
+  }
+  return `The server returned ${status}.`;
+}
 export async function* readSSE(
   response: Response,
   signal: AbortSignal,
 ): AsyncIterable<PipelineEvent> {
-  if (!response.ok) {
-    const body = await response.text();
-    let message = body;
-    try {
-      const error: unknown = JSON.parse(body);
-      if (typeof error === "object" && error !== null && "error" in error)
-        message = String(error.error);
-    } catch {
-      /* Plain-text responses are also supported. */
-    }
-    throw new Error(
-      message.slice(0, 400) || `Server returned ${response.status}`,
-    );
-  }
+  if (!response.ok)
+    throw new Error(describeErrorBody(response.status, await response.text()));
   if (!response.body)
     throw new Error("The server did not return an event stream.");
   const reader = response.body.getReader();
@@ -221,7 +245,14 @@ export async function* readSSE(
           .map((l) => l.slice(5).trimStart())
           .join("\n");
         if (!data) continue;
-        const parsed: unknown = JSON.parse(data);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          throw new Error(
+            "The server sent an event that could not be read. Check that the URL points to Pixelscope.",
+          );
+        }
         if (typeof parsed === "object" && parsed !== null && "error" in parsed)
           throw new Error(String(parsed.error));
         if (
@@ -237,32 +268,62 @@ export async function* readSSE(
     await reader.cancel();
   }
 }
+/** POST a run to a local server, with errors that say what to check. */
+async function post(
+  url: string,
+  path: string,
+  c: RunConfig,
+  s: AbortSignal,
+  what: string,
+  start: string,
+  headers: Record<string, string> = {},
+) {
+  const problem = serverUrlProblem(url);
+  if (problem)
+    throw new Error(
+      `The ${what} URL in Connection settings is invalid. ${problem}`,
+    );
+  const base = serverBase(url);
+  try {
+    return await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ ...c, seed: clampSeed(c.seed) }),
+      signal: s,
+    });
+  } catch (e) {
+    if (s.aborted) throw e;
+    throw new Error(
+      `Could not reach the ${what} at ${base}. Start it with ${start}, check the URL in Connection settings, and make sure it allows this page's origin (${globalThis.location?.origin ?? "unknown"}).`,
+    );
+  }
+}
 export class LabSource implements PipelineSource {
   async *stream(c: RunConfig, s: AbortSignal) {
     if (c.family !== "diffusion")
       throw new Error(
-        "Lab supports diffusion only. Use Mock for the illustrative autoregressive track.",
+        "Lab supports diffusion only. Use Demo for the illustrative autoregressive track.",
       );
     yield* readSSE(
-      await fetch(`${c.labUrl}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(c),
-        signal: s,
-      }),
+      await post(c.labUrl, "/generate", c, s, "Lab", "uvicorn lab.server:app"),
       s,
     );
   }
 }
 export class LiveSource implements PipelineSource {
+  /** `token` is sent only when the proxy sets PIXELSCOPE_PROXY_TOKEN. */
+  constructor(private token = "") {}
   async *stream(c: RunConfig, s: AbortSignal) {
     yield* readSSE(
-      await fetch(`${c.proxyUrl}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(c),
-        signal: s,
-      }),
+      await post(
+        c.proxyUrl,
+        "/api/generate",
+        c,
+        s,
+        "proxy",
+        "npm run proxy",
+        this.token ? { "X-Pixelscope-Token": this.token } : {},
+      ),
       s,
     );
   }

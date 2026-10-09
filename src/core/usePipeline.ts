@@ -9,7 +9,12 @@ export function usePipeline() {
   const [runConfig, setRunConfig] = useState(config);
   const abort = useRef<AbortController | null>(null);
   const generate = useCallback(
+    /**
+     * Start a run. Demo runs are saved only when the person starts them
+     * (autoplay); loading the page, a preset or a family switch is not saved.
+     */
     async (c: RunConfig = useStore.getState().config, autoplay = true) => {
+      const save = autoplay || c.mode !== "mock";
       abort.current?.abort();
       const controller = new AbortController();
       abort.current = controller;
@@ -28,7 +33,7 @@ export function usePipeline() {
           ? new MockSource()
           : c.mode === "lab"
             ? new LabSource()
-            : new LiveSource();
+            : new LiveSource(useStore.getState().proxyToken);
       try {
         for await (const event of source.stream(actual, controller.signal)) {
           if (controller.signal.aborted) return;
@@ -40,7 +45,7 @@ export function usePipeline() {
             "The event stream ended without a completed image. Check the server and retry.",
           );
         }
-        if (scheduler.events.some((e) => e.type === "done")) {
+        if (save) {
           const final = [...scheduler.events]
             .reverse()
             .find((e) => "image" in e);
@@ -66,7 +71,10 @@ export function usePipeline() {
         }
       } catch (e: unknown) {
         if (!controller.signal.aborted) {
-          setError(e instanceof Error ? e.message : "Generation failed.");
+          setError(
+            e instanceof Error ? e.message : "Generation failed.",
+            actual.mode !== "mock",
+          );
           scheduler.pause();
         }
       } finally {
@@ -76,8 +84,10 @@ export function usePipeline() {
     [setConfig, setError, setReceiving],
   );
   useEffect(() => {
+    // Mount only: open the default Demo once, without saving it.
     void generate(config, false);
     return () => abort.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     let last = performance.now();

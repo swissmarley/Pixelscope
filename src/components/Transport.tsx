@@ -27,9 +27,11 @@ export default function Transport() {
             ? `${Math.max(0, events.length - index - 1)} events queued`
             : "caught up"}
           {receiving && ` · ${lag.toFixed(1)}s behind`}
-          <button onClick={() => scheduler.scrub(events.length - 1)}>
-            Catch up
-          </button>
+          {events.length - index - 1 > 0 && (
+            <button onClick={() => scheduler.scrub(events.length - 1)}>
+              Catch up
+            </button>
+          )}
         </span>
         <span className="shortcuts">
           SPACE to {playing ? "pause" : "play"} <kbd>←</kbd> <kbd>→</kbd> to
@@ -65,6 +67,9 @@ export default function Transport() {
             {events.map((e, i) => (
               <button
                 key={e.id}
+                // The timeline slider is the keyboard control; markers are for pointers.
+                tabIndex={-1}
+                aria-label={`Event ${i + 1}: ${e.stage}, ${e.type}`}
                 title={`${e.stage}: ${e.type}`}
                 className={`${i <= index ? "passed" : ""} ${i === index ? "current" : ""} ${i === 0 || e.stage !== events[i - 1].stage ? "stage-mark" : ""}`}
                 onClick={() => scheduler.scrub(i)}

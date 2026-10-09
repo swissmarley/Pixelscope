@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import sharp from "sharp";
 import {
+  displaySize,
   imageExtension,
+  readImageInfo,
   referenceProblem,
   sniffImage,
   MAX_REFERENCE_BYTES,
@@ -20,7 +22,7 @@ describe("reference image checks", () => {
       [await solid(640, 480, 4).webp().toBuffer(), "image/webp"],
     ] as const;
     for (const [bytes, mime] of cases)
-      expect(sniffImage(new Uint8Array(bytes))).toEqual({
+      expect(sniffImage(new Uint8Array(bytes))).toMatchObject({
         mime,
         width: 640,
         height: 480,
@@ -35,6 +37,38 @@ describe("reference image checks", () => {
       width: 300,
       height: 200,
     });
+  });
+  it("reads EXIF orientation and swaps sides for rotated photos", async () => {
+    const bytes = await solid(640, 480)
+      .jpeg()
+      .withMetadata({ orientation: 6 })
+      .toBuffer();
+    const info = sniffImage(new Uint8Array(bytes));
+    expect(info).toEqual({
+      mime: "image/jpeg",
+      width: 640,
+      height: 480,
+      orientation: 6,
+    });
+    expect(displaySize(info!)).toEqual({ width: 480, height: 640 });
+    const upright = sniffImage(
+      new Uint8Array(await solid(640, 480).jpeg().toBuffer()),
+    );
+    expect(upright?.orientation).toBe(1);
+    expect(displaySize(upright!)).toEqual({ width: 640, height: 480 });
+  });
+  it("keeps reading slices until the JPEG frame header", async () => {
+    const bytes = await solid(300, 200)
+      .withMetadata({ exif: { IFD0: { Artist: "x".repeat(20000) } } })
+      .jpeg()
+      .toBuffer();
+    // The frame header lies beyond a 1 KB first slice.
+    expect(sniffImage(new Uint8Array(bytes.subarray(0, 1024)))).toBeUndefined();
+    expect(
+      await readImageInfo(new Blob([new Uint8Array(bytes)]), 1024),
+    ).toMatchObject({ width: 300, height: 200 });
+    const text = new Blob(["not an image ".repeat(1000)]);
+    expect(await readImageInfo(text, 1024)).toBeUndefined();
   });
   it("rejects renamed, empty and truncated files", async () => {
     const text = new TextEncoder().encode("just some text, not an image");

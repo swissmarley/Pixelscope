@@ -33,7 +33,7 @@ export function usePipeline() {
           ? new MockSource()
           : c.mode === "lab"
             ? new LabSource()
-            : new LiveSource();
+            : new LiveSource(useStore.getState().proxyToken);
       try {
         for await (const event of source.stream(actual, controller.signal)) {
           if (controller.signal.aborted) return;

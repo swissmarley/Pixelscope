@@ -276,6 +276,7 @@ async function post(
   s: AbortSignal,
   what: string,
   start: string,
+  headers: Record<string, string> = {},
 ) {
   const problem = serverUrlProblem(url);
   if (problem)
@@ -286,7 +287,7 @@ async function post(
   try {
     return await fetch(`${base}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({ ...c, seed: clampSeed(c.seed) }),
       signal: s,
     });
@@ -310,9 +311,19 @@ export class LabSource implements PipelineSource {
   }
 }
 export class LiveSource implements PipelineSource {
+  /** `token` is sent only when the proxy sets PIXELSCOPE_PROXY_TOKEN. */
+  constructor(private token = "") {}
   async *stream(c: RunConfig, s: AbortSignal) {
     yield* readSSE(
-      await post(c.proxyUrl, "/api/generate", c, s, "proxy", "npm run proxy"),
+      await post(
+        c.proxyUrl,
+        "/api/generate",
+        c,
+        s,
+        "proxy",
+        "npm run proxy",
+        this.token ? { "X-Pixelscope-Token": this.token } : {},
+      ),
       s,
     );
   }

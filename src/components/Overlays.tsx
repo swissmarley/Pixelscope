@@ -87,7 +87,7 @@ export function Settings({
   onChange: (c: Partial<RunConfig>) => void;
   onClose: () => void;
 }) {
-  const { autoPause, setAutoPause } = useStore();
+  const { autoPause, setAutoPause, proxyToken, setProxyToken } = useStore();
   const proxyProblem = serverUrlProblem(config.proxyUrl);
   const labProblem = serverUrlProblem(config.labUrl);
   return (
@@ -137,6 +137,17 @@ export function Settings({
             {proxyProblem}
           </small>
         )}
+      </label>
+      <label>
+        Proxy token (optional)
+        <input
+          aria-label="Proxy token"
+          type="password"
+          autoComplete="off"
+          placeholder="Only if the proxy sets PIXELSCOPE_PROXY_TOKEN"
+          value={proxyToken}
+          onChange={(e) => setProxyToken(e.target.value)}
+        />
       </label>
       <label>
         Lab URL

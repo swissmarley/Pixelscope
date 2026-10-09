@@ -1,5 +1,5 @@
 import express from "express";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 const app = express();
 app.disable("x-powered-by");
@@ -23,7 +23,10 @@ app.use((req, res, next) => {
     return res.status(403).json({ error: "Origin is not allowed." });
   if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Vary", "Origin");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, X-Pixelscope-Token",
+  );
   res.setHeader("Access-Control-Allow-Methods", "POST,GET,OPTIONS");
   // Chrome asks before a public HTTPS page (such as GitHub Pages) reaches localhost.
   if (
@@ -39,6 +42,7 @@ let active = 0;
 app.get("/health", (_req, res) =>
   res.json({
     status: "ready",
+    token_required: Boolean(proxyToken),
     providers: {
       openai: Boolean(process.env.OPENAI_API_KEY),
       gemini: Boolean(process.env.GEMINI_API_KEY),
@@ -112,7 +116,22 @@ async function* parseProviderStream(response, signal) {
     await reader.cancel();
   }
 }
+// Optional shared secret. When set, only clients that send it may spend
+// provider credit; other local processes and pages cannot.
+const proxyToken = process.env.PIXELSCOPE_PROXY_TOKEN || "";
+const digest = (value) => createHash("sha256").update(value).digest();
+function tokenMatches(value) {
+  if (!proxyToken) return true;
+  if (typeof value !== "string") return false;
+  // Equal-length digests let timingSafeEqual compare without leaking length.
+  return timingSafeEqual(digest(value), digest(proxyToken));
+}
 app.post("/api/generate", async (req, res) => {
+  if (!tokenMatches(req.headers["x-pixelscope-token"]))
+    return res.status(401).json({
+      error:
+        "This proxy requires a token. Enter PIXELSCOPE_PROXY_TOKEN in Connection settings.",
+    });
   const { prompt, provider, model, reference } = req.body || {};
   if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 4000)
     return res

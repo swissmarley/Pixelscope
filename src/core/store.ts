@@ -1,10 +1,12 @@
 import { create } from "zustand";
 import { defaultConfig, type RunConfig, type PipelineEvent } from "./types";
 import { Scheduler } from "./scheduler";
-import { pickSettings, sanitizeSettings } from "./settings";
+import { pickSettings, sanitizeProxyToken, sanitizeSettings } from "./settings";
 interface State {
   config: RunConfig;
   autoPause: boolean;
+  /** Sent to the proxy only; kept out of RunConfig so it never reaches the Lab or history. */
+  proxyToken: string;
   events: PipelineEvent[];
   index: number;
   playing: boolean;
@@ -15,6 +17,7 @@ interface State {
   errorInSettings: boolean;
   setConfig: (c: Partial<RunConfig>) => void;
   setAutoPause: (b: boolean) => void;
+  setProxyToken: (token: string) => void;
   setReceiving: (b: boolean) => void;
   setError: (e: string, inSettings?: boolean) => void;
   sync: () => void;
@@ -25,13 +28,18 @@ function loadSettings() {
     const stored: unknown = JSON.parse(
       localStorage.getItem(settingsKey) || "{}",
     );
-    const s = (stored || {}) as { config?: unknown; autoPause?: unknown };
+    const s = (stored || {}) as {
+      config?: unknown;
+      autoPause?: unknown;
+      proxyToken?: unknown;
+    };
     return {
       config: { ...defaultConfig, ...sanitizeSettings(s.config) },
       autoPause: s.autoPause === true,
+      proxyToken: sanitizeProxyToken(s.proxyToken),
     };
   } catch {
-    return { config: defaultConfig, autoPause: false };
+    return { config: defaultConfig, autoPause: false, proxyToken: "" };
   }
 }
 const initial = loadSettings();
@@ -40,6 +48,7 @@ scheduler.autoPause = initial.autoPause;
 export const useStore = create<State>((set) => ({
   config: initial.config,
   autoPause: initial.autoPause,
+  proxyToken: initial.proxyToken,
   events: [],
   index: 0,
   playing: false,
@@ -52,6 +61,7 @@ export const useStore = create<State>((set) => ({
     scheduler.autoPause = autoPause;
     set({ autoPause });
   },
+  setProxyToken: (token) => set({ proxyToken: sanitizeProxyToken(token) }),
   setReceiving: (receiving) => set({ receiving }),
   setError: (error, errorInSettings = false) => set({ error, errorInSettings }),
   sync: () =>
@@ -63,17 +73,21 @@ export const useStore = create<State>((set) => ({
     }),
 }));
 // Save settings only when they change, not on every playback tick.
-let saved = JSON.stringify({
-  config: pickSettings(initial.config),
-  autoPause: initial.autoPause,
-});
-useStore.subscribe((s, previous) => {
-  if (s.config === previous.config && s.autoPause === previous.autoPause)
-    return;
-  const next = JSON.stringify({
+const persisted = (s: Pick<State, "config" | "autoPause" | "proxyToken">) =>
+  JSON.stringify({
     config: pickSettings(s.config),
     autoPause: s.autoPause,
+    proxyToken: s.proxyToken,
   });
+let saved = persisted(initial);
+useStore.subscribe((s, previous) => {
+  if (
+    s.config === previous.config &&
+    s.autoPause === previous.autoPause &&
+    s.proxyToken === previous.proxyToken
+  )
+    return;
+  const next = persisted(s);
   if (next === saved) return;
   saved = next;
   try {

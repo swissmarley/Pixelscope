@@ -56,6 +56,12 @@ export function serverUrlProblem(value: string): string | undefined {
 export function serverBase(value: string): string {
   return value.trim().replace(/\/+$/, "");
 }
+/** Optional proxy token: printable ASCII only, so it is a valid header value. */
+export function sanitizeProxyToken(value: unknown): string {
+  return typeof value === "string"
+    ? value.replace(/[^\x20-\x7e]/g, "").slice(0, 200)
+    : "";
+}
 /** Whole-number seed in the 32-bit range. */
 export function clampSeed(value: number): number {
   if (!Number.isFinite(value)) return 0;

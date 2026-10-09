@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   clampSeed,
+  sanitizeProxyToken,
   pickSettings,
   sanitizeSettings,
   serverUrlProblem,
@@ -37,6 +38,11 @@ describe("settings", () => {
     expect(serverUrlProblem("http://127.0.0.1:3001")).toBeUndefined();
     expect(serverUrlProblem("not a url")).toMatch(/full URL/);
     expect(serverUrlProblem("ftp://127.0.0.1")).toMatch(/http/);
+  });
+  it("keeps proxy tokens header-safe", () => {
+    expect(sanitizeProxyToken("abc-123")).toBe("abc-123");
+    expect(sanitizeProxyToken("ab\ncdé")).toBe("abcd");
+    expect(sanitizeProxyToken(42)).toBe("");
   });
   it("keeps seeds whole and in range", () => {
     expect(clampSeed(1.5)).toBe(1);

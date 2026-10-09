@@ -23,7 +23,38 @@ jobs:
         run: npm run check
       - name: Build site
         run: npm run build
-      - name: Check proxy and Lab syntax
+      - name: Check proxy syntax
+        run: node --check server/proxy.mjs
+
+  lab-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: pip install -r lab/requirements-test.txt
+      - name: Lab API tests
+        run: python -m pytest lab/tests/test_api.py -q
+
+  lab-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CPU PyTorch and Lab dependencies
         run: |
-          node --check server/proxy.mjs
-          python3 -m py_compile lab/server.py
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r lab/requirements.txt -r lab/requirements-test.txt
+      - name: Lab worker regression tests (tiny random model, offline)
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: python -m pytest lab/tests/test_worker.py -q
